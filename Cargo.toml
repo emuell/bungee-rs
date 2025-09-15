@@ -1,0 +1,18 @@
+[package]
+name = "bungee-rs"
+version = "0.1.0"
+edition = "2021"
+description = "High level Rust FFI bindings for the Bungee audio time-stretching library"
+license = "MPL-2.0"
+repository = "https://github.com/bungee-audio-stretch/bungee"
+authors = ["Eduard Müller <mail@emuell.net>"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lazy_static = "^1.5"
+bungee-sys = { path = "./bungee-sys" }
+
+[features]
+bungee_pro = ["bungee-sys/bungee_pro"]
