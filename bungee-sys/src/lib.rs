@@ -1,4 +1,5 @@
 //! Provides raw, low-level bindings to the Bungee C API.
+#![recursion_limit = "512"]
 
 use std::os::raw::{c_char, c_double, c_float, c_int};
 
@@ -121,7 +122,7 @@ pub struct Functions {
         unsafe extern "C" fn(
             implementation: *mut BungeeStretcher,
             data: *const c_float,
-            channel_stride: isize, // Corresponds to intptr_t
+            channel_stride: isize, // intptr_t
             mute_frame_count_head: c_int,
             mute_frame_count_tail: c_int,
         ),
@@ -140,10 +141,12 @@ pub struct Functions {
 #[allow(unused)]
 extern "C" {
     /// Returns a pointer to the functions for the Bungee Basic edition.
-    #[cfg(not(feature = "bungee_pro"))]
     pub fn getFunctionsBungeeBasic() -> *const Functions;
 
     /// Returns a pointer to the functions for the Bungee Pro edition.
-    #[cfg(feature = "bungee_pro")]
+    #[allow(unused)]
     pub fn getFunctionsBungeePro() -> *const Functions;
 }
+
+/// Raw, low-level bindings to the Bungee Stream C++ API.
+pub mod stream;

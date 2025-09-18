@@ -10,8 +10,10 @@ authors = ["Eduard Müller <mail@emuell.net>"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[build-dependencies]
-cmake = "^0.1"
+[dependencies]
+cpp = "^0.5"
 
-[features]
-bungee_pro = []
+[build-dependencies]
+cc = "^1.2"
+cpp_build = "^0.5"
+cmake = "^0.1"

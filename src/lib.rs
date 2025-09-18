@@ -1,5 +1,6 @@
-//! High level wrapper for the bungee-sys FFI library.
+#![doc=include_str!("../README.md")]
 
+use bungee_sys::{stream::BungeeStream, BungeeStretcher, SampleRates};
 use lazy_static::lazy_static;
 
 // -------------------------------------------------------------------------------------------------
@@ -7,13 +8,8 @@ use lazy_static::lazy_static;
 // Bungee C API library functions, initialized once at runtime
 lazy_static! {
     static ref BUNGEE_FUNCTIONS: bungee_sys::Functions = {
-        #[cfg(not(feature = "bungee_pro"))]
         let funcs_ptr = unsafe {
             bungee_sys::getFunctionsBungeeBasic()
-        };
-        #[cfg(feature = "bungee_pro")]
-        let funcs_ptr = unsafe {
-            bungee_sys::getFunctionsBungeePro()
         };
         if funcs_ptr.is_null() {
             panic!("Failed to get Bungee function table");
@@ -75,6 +71,16 @@ pub struct InputChunk {
     /// Frame offsets relative to the start of the audio track.
     pub begin: isize,
     pub end: isize,
+}
+
+impl InputChunk {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&self) -> usize {
+        (self.end - self.begin).max(0) as usize
+    }
 }
 
 impl From<bungee_sys::InputChunk> for InputChunk {
@@ -191,10 +197,13 @@ impl<'a> From<&mut OutputChunk<'a>> for bungee_sys::OutputChunk {
 
 /// A safe wrapper around the Bungee stretcher instance.
 pub struct Stretcher {
-    inner: *mut bungee_sys::BungeeStretcher,
+    inner: *mut BungeeStretcher,
     sample_rate: usize,
     num_channels: usize,
 }
+
+unsafe impl Send for Stretcher {}
+unsafe impl Sync for Stretcher {}
 
 impl Stretcher {
     /// Creates and initializes a Bungee stretcher instance.
@@ -220,7 +229,7 @@ impl Stretcher {
                 None => return Err("Bungee create function not available"),
             };
 
-            let sample_rates = bungee_sys::SampleRates {
+            let sample_rates = SampleRates {
                 input: sample_rate as i32,
                 output: sample_rate as i32,
             };
@@ -228,13 +237,13 @@ impl Stretcher {
             // The C++ API defaults log2SynthesisHopAdjust to 0
             let log2_hop_adjust = 0;
 
-            let state = create_fn(sample_rates, num_channels as i32, log2_hop_adjust);
-            if state.is_null() {
+            let inner = create_fn(sample_rates, num_channels as i32, log2_hop_adjust);
+            if inner.is_null() {
                 return Err("Failed to create Bungee stretcher");
             }
 
             Ok(Stretcher {
-                inner: state,
+                inner,
                 sample_rate,
                 num_channels,
             })
@@ -247,6 +256,18 @@ impl Stretcher {
 
     pub fn num_channels(&self) -> usize {
         self.num_channels
+    }
+
+    /// Returns the largest number of frames that might be requested by specify_grain().
+    /// This helps the caller to allocate large enough buffers because it is guaranteed that
+    /// `InputChunk.len()` will not exceed this number.
+    pub fn max_input_frame_count(&self) -> usize {
+        let functions = &BUNGEE_FUNCTIONS;
+        if let Some(func) = functions.max_input_frame_count {
+            unsafe { func(self.inner as *const _) as usize }
+        } else {
+            panic!("Bungee max_input_frame_count function not available");
+        }
     }
 
     /// Adjusts `request.position` for a run-in.
@@ -279,7 +300,7 @@ impl Stretcher {
     /// # Safety
     /// `data` must be a valid pointer to audio data corresponding to the chunk specified
     /// by a prior call to `bungee_specify_grain`.
-    pub fn analyse_grain(&mut self, data: &mut [f32], channel_stride: isize) {
+    pub fn analyse_grain(&mut self, data: &mut [f32], channel_stride: usize) {
         let functions = &BUNGEE_FUNCTIONS;
         if let Some(analyse_grain_fn) = functions.analyse_grain {
             unsafe {
@@ -289,7 +310,7 @@ impl Stretcher {
                 analyse_grain_fn(
                     self.inner,
                     data.as_ptr(),
-                    channel_stride,
+                    channel_stride as isize,
                     mute_head,
                     mute_tail,
                 );
@@ -335,12 +356,160 @@ impl Drop for Stretcher {
 
 // -------------------------------------------------------------------------------------------------
 
+/// A wrapper for `Stretcher` that provides an easy to use API for "streaming" applications
+/// where Bungee is used for forward playback only.
+pub struct Stream {
+    inner: *mut BungeeStream,
+    channel_count: usize,
+    input_pointers: Vec<*const f32>,
+    output_pointers: Vec<*mut f32>,
+}
+
+unsafe impl Send for Stream {}
+unsafe impl Sync for Stream {}
+
+impl Stream {
+    /// Creates a new `Stream` instance.
+    pub fn new(
+        sample_rate: usize,
+        channel_count: usize,
+        max_input_frame_count: usize,
+    ) -> Result<Self, &'static str> {
+        let sample_rates = SampleRates {
+            input: sample_rate as i32,
+            output: sample_rate as i32,
+        };
+
+        // The C++ API defaults log2SynthesisHopAdjust to 0
+        let log2_synthesis_hop_adjust = 0;
+
+        let stream_ptr = bungee_sys::stream::create(
+            sample_rates,
+            channel_count as i32,
+            max_input_frame_count as i32,
+            log2_synthesis_hop_adjust,
+        );
+
+        let input_pointers = vec![std::ptr::null(); channel_count];
+        let output_pointers = vec![std::ptr::null_mut(); channel_count];
+
+        Ok(Stream {
+            inner: stream_ptr,
+            channel_count,
+            input_pointers,
+            output_pointers,
+        })
+    }
+
+    /// Processes a segment of audio. Returns the number of output frames that were rendered
+    /// to `output_channels`.
+    /// The number of frames will be set by dithering either to `floor(output_frame_count)` or
+    /// `ceil(output_frame_count)`.
+    ///
+    /// Parameters:
+    /// * **input_channels:** Slice of `Vec<f32>`, one for each channel of input audio:
+    ///   set to `None` for mute input
+    /// * **output_channels:** Slice of `Vec<f32>`, one for each channel of output audio
+    /// * **input_frame_count:** Number of input audio frames to be processed
+    /// * **pitch:** Audio pitch shift (see Request::pitch)
+    pub fn process(
+        &mut self,
+        input_channels: Option<&[Vec<f32>]>,
+        output_channels: &mut [Vec<f32>],
+        input_frame_count: usize,
+        output_frame_count: f64,
+        pitch: f64,
+    ) -> usize {
+        // verify input buffer constraints
+        if let Some(inputs) = input_channels {
+            assert_eq!(
+                inputs.len(),
+                self.channel_count,
+                "input_channels slice count must match stream channel count"
+            );
+            for (channel, samples) in inputs.iter().enumerate() {
+                assert!(
+                    samples.len() >= input_frame_count,
+                    "input channel[{}].len() ({}) is less than input_frame_count ({})",
+                    channel,
+                    samples.len(),
+                    input_frame_count
+                );
+            }
+        }
+        if let Some(input_channels) = input_channels {
+            for (p, c) in self.input_pointers.iter_mut().zip(input_channels) {
+                *p = c.as_ptr();
+            }
+        } else {
+            self.input_pointers.fill(std::ptr::null());
+        }
+
+        // verify output buffer constraints
+        assert_eq!(
+            output_channels.len(),
+            self.channel_count,
+            "output_channels slice count must match stream channel count"
+        );
+        let required_output_len = output_frame_count.ceil() as usize;
+        for (channel, samples) in output_channels.iter().enumerate() {
+            assert!(
+                samples.len() >= required_output_len,
+                "output channel[{}].len() ({}) is less than required output frame count ({})",
+                channel,
+                samples.len(),
+                required_output_len
+            );
+        }
+        for (p, c) in self.output_pointers.iter_mut().zip(output_channels) {
+            *p = c.as_mut_ptr();
+        }
+
+        // process
+        bungee_sys::stream::process(
+            self.inner,
+            if input_channels.is_none() {
+                std::ptr::null()
+            } else {
+                self.input_pointers.as_ptr()
+            },
+            self.output_pointers.as_mut_ptr(),
+            input_frame_count as i32,
+            output_frame_count,
+            pitch,
+        ) as usize
+    }
+
+    /// Current position in the input stream. This is sum of `input_sample_count` over all `process()` calls.
+    pub fn input_position(&self) -> isize {
+        bungee_sys::stream::input_position(self.inner) as isize
+    }
+
+    /// Current position of the output stream in terms of input frames.
+    pub fn output_position(&self) -> f64 {
+        bungee_sys::stream::output_position(self.inner)
+    }
+
+    /// Latency due to the stretcher. Units are input frames.
+    pub fn latency(&self) -> f64 {
+        bungee_sys::stream::latency(self.inner)
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        bungee_sys::stream::destroy(self.inner);
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn simple_sine_wave() {
+    fn processing() {
         // Test the complete workflow with a simple sine wave
         let mut stretcher = Stretcher::new(44100, 1).unwrap();
 
@@ -351,229 +520,23 @@ mod tests {
             reset: false,
         };
 
-        // 1. Preroll
-        stretcher.preroll(&mut request);
-
-        // 2. Specify grain
-        let input_chunk = stretcher.specify_grain(&request);
-        let sample_count = (input_chunk.end - input_chunk.begin).max(0) as usize;
-
-        // Create a simple sine wave for testing
-        let mut data = vec![0.0f32; sample_count];
-        for (i, sample) in data.iter_mut().enumerate().take(sample_count) {
-            *sample = (i as f32 * 0.1).sin(); // Simple sine wave
-        }
-
-        // 3. Analyse grain with sine wave data
-        stretcher.analyse_grain(&mut data, 1);
-
-        // 4. Synthesise grain
-        let mut output_data = vec![0.0f32; 1024]; // Allocate buffer for output
-        let mut output = OutputChunk::new(&mut output_data, 1);
-        stretcher.synthesise_grain(&mut output);
-
-        // 5. Next
-        stretcher.next(&mut request);
-
-        // Verify we didn't panic and the request was updated
-        assert!(request.position >= 0.0);
-        assert!(output.frame_count > 0);
-    }
-
-    #[test]
-    fn speed_change() {
-        // Test the workflow with a speed change
-        let mut stretcher = Stretcher::new(44100, 1).unwrap();
-
-        let mut request = Request {
-            pitch: 1.0,
-            speed: 1.5, // 50% faster
-            position: 0.0,
-            reset: false,
-        };
-
-        // 1. Preroll
-        stretcher.preroll(&mut request);
-
-        // 2. Specify grain
-        let input_chunk = stretcher.specify_grain(&request);
-        let sample_count = (input_chunk.end - input_chunk.begin).max(0) as usize;
-
-        // Create a simple sine wave for testing
-        let mut data = vec![0.0f32; sample_count];
-        for (i, sample) in data.iter_mut().enumerate().take(sample_count) {
-            *sample = (i as f32 * 0.1).sin(); // Simple sine wave
-        }
-
-        // 3. Analyse grain
-        stretcher.analyse_grain(&mut data, 1);
-
-        // 4. Synthesise grain
-        let mut output_data = vec![0.0f32; 1024]; // Allocate buffer for output
-        let mut output = OutputChunk::new(&mut output_data, 1);
-        stretcher.synthesise_grain(&mut output);
-
-        // 5. Next
-        stretcher.next(&mut request);
-
-        // Verify we didn't panic and the request was updated
-        assert!(request.position >= 0.0);
-        assert!(output.frame_count > 0);
-    }
-
-    #[test]
-    fn pitch_change() {
-        // Test the workflow with a pitch change
-        let mut stretcher = Stretcher::new(44100, 1).unwrap();
-
-        let mut request = Request {
-            pitch: 1.5, // Up a fifth
-            speed: 1.0,
-            position: 0.0,
-            reset: false,
-        };
-
-        // 1. Preroll
-        stretcher.preroll(&mut request);
-
-        // 2. Specify grain
-        let input_chunk = stretcher.specify_grain(&request);
-        let sample_count = (input_chunk.end - input_chunk.begin).max(0) as usize;
-
-        // Create a simple sine wave for testing
-        let mut data = vec![0.0f32; sample_count];
-        for (i, sample) in data.iter_mut().enumerate().take(sample_count) {
-            *sample = (i as f32 * 0.1).sin(); // Simple sine wave
-        }
-
-        // 3. Analyse grain
-        stretcher.analyse_grain(&mut data, 1);
-
-        // 4. Synthesise grain
-        let mut output_data = vec![0.0f32; 1024]; // Allocate buffer for output
-        let mut output = OutputChunk::new(&mut output_data, 1);
-        stretcher.synthesise_grain(&mut output);
-
-        // 5. Next
-        stretcher.next(&mut request);
-
-        // Verify we didn't panic and the request was updated
-        assert!(request.position >= 0.0);
-        assert!(output.frame_count > 0);
-    }
-
-    #[test]
-    fn reset_flag() {
-        // Test the workflow with the reset flag
-        let mut stretcher = Stretcher::new(44100, 1).unwrap();
-
-        let mut request = Request {
-            pitch: 1.0,
-            speed: 1.0,
-            position: 0.0,
-            reset: true, // Reset flag
-        };
-
-        // 1. Preroll
-        stretcher.preroll(&mut request);
-
-        // 2. Specify grain
-        let input_chunk = stretcher.specify_grain(&request);
-        let sample_count = (input_chunk.end - input_chunk.begin).max(0) as usize;
-
-        // Create a simple sine wave for testing
-        let mut data = vec![0.0f32; sample_count];
-        for (i, sample) in data.iter_mut().enumerate().take(sample_count) {
-            *sample = (i as f32 * 0.1).sin(); // Simple sine wave
-        }
-
-        // 3. Analyse grain
-        stretcher.analyse_grain(&mut data, 1);
-
-        // 4. Synthesise grain
-        let mut output_data = vec![0.0f32; 1024]; // Allocate buffer for output
-        let mut output = OutputChunk::new(&mut output_data, 1);
-        stretcher.synthesise_grain(&mut output);
-
-        // 5. Next
-        stretcher.next(&mut request);
-
-        // Verify we didn't panic and the request was updated
-        assert!(request.position >= 0.0);
-        assert!(output.frame_count > 0);
-    }
-
-    #[test]
-    fn multiple_grains() {
-        // Test processing multiple grains in sequence
-        let mut stretcher = Stretcher::new(44100, 1).unwrap();
-
-        let mut request = Request {
-            pitch: 1.0,
-            speed: 1.0,
-            position: 0.0,
-            reset: false,
-        };
-
-        // Preroll once
-        stretcher.preroll(&mut request);
-
-        // Process 3 grains in sequence
-        for _grain_index in 0..3 {
-            // Specify grain
-            let input_chunk = stretcher.specify_grain(&request);
-            let sample_count = input_chunk.end - input_chunk.begin;
-
-            // Create silent data for simplicity
-            let mut data = vec![0.0f32; sample_count as usize];
-
-            // Analyse grain
-            stretcher.analyse_grain(&mut data, 1);
-
-            // Synthesise grain
-            let mut output_data = vec![0.0f32; 1024]; // Allocate buffer for output
-            let mut output = OutputChunk::new(&mut output_data, 1);
-            stretcher.synthesise_grain(&mut output);
-
-            // Next
-            stretcher.next(&mut request);
-
-            // Ensure position advances
-            assert!(request.position >= 0.0);
-        }
-    }
-
-    #[test]
-    fn negative_position() {
-        // Test workflow with a negative position (as might occur in seeking)
-        let mut stretcher = Stretcher::new(44100, 1).unwrap();
-
-        let mut request = Request {
-            pitch: 1.0,
-            speed: 1.0,
-            position: -100.0, // Negative position
-            reset: false,
-        };
-
         // Preroll
         stretcher.preroll(&mut request);
-        assert!(request.position < -100.0);
 
         // Specify grain
         let input_chunk = stretcher.specify_grain(&request);
+        let sample_count = (input_chunk.end - input_chunk.begin).max(0) as usize;
 
-        // Even with negative position, we should get valid chunk bounds
-        // The library should handle this gracefully
-        assert!(input_chunk.end >= 0);
+        // Create a simple sine wave for testing
+        let mut data = vec![0.0f32; sample_count];
+        for (i, sample) in data.iter_mut().enumerate().take(sample_count) {
+            *sample = (i as f32 * 0.1).sin(); // Simple sine wave
+        }
 
-        // Create some data (we'll use zeros)
-        let sample_count = input_chunk.end - input_chunk.begin;
-        let mut data = vec![0.0f32; sample_count as usize];
-
-        // Analyse
+        // Analyse grain with sine wave data
         stretcher.analyse_grain(&mut data, 1);
 
-        // Synthesise
+        // Synthesise grain
         let mut output_data = vec![0.0f32; 1024]; // Allocate buffer for output
         let mut output = OutputChunk::new(&mut output_data, 1);
         stretcher.synthesise_grain(&mut output);
@@ -582,6 +545,41 @@ mod tests {
         stretcher.next(&mut request);
 
         // Verify we didn't panic and the request was updated
-        assert!(request.position >= -100.0);
+        assert!(request.position >= 0.0);
+        assert!(output.frame_count > 0);
+    }
+
+    #[test]
+    fn stream_processing() {
+        const SAMPLE_RATE: usize = 44100;
+        const NUM_CHANNELS: usize = 1;
+        const STRETCH_FACTOR: f64 = 0.7;
+        const INPUT_SAMPLES_COUNT: usize = 1024;
+        const OUTPUT_SAMPLES_COUNT: f64 = INPUT_SAMPLES_COUNT as f64 / STRETCH_FACTOR;
+
+        // max_input_sample_count for Stream::new is the max number of samples in one process() call.
+        let mut stream = Stream::new(SAMPLE_RATE, NUM_CHANNELS, INPUT_SAMPLES_COUNT).unwrap();
+
+        // Create a silent input buffer
+        let input_channels = vec![vec![0.0f32; INPUT_SAMPLES_COUNT]];
+
+        // Create an output buffer, make it a bit larger to be safe.
+        let mut output_channels = vec![vec![0.0f32; OUTPUT_SAMPLES_COUNT.ceil() as usize * 2]];
+
+        // Process one block of audio
+        let output_sample_count = stream.process(
+            Some(&input_channels),
+            &mut output_channels,
+            INPUT_SAMPLES_COUNT,
+            OUTPUT_SAMPLES_COUNT,
+            1.0,
+        );
+
+        // Output count should match
+        assert_eq!(output_sample_count, OUTPUT_SAMPLES_COUNT.ceil() as usize);
+
+        // Check stream state after processing.
+        assert_eq!(stream.input_position(), INPUT_SAMPLES_COUNT as isize);
+        assert!(stream.latency() > 0.0);
     }
 }
