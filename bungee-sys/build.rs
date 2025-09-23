@@ -15,8 +15,8 @@ fn main() {
 
     // build bungee C++ lib with cmake
     build_bungee();
-    // build our C++ stream wrapper with cpp_build
-    build_stream_wrapper();
+    // build our C++ wrappers with cpp_build
+    build_wrappers();
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -57,8 +57,10 @@ fn build_bungee() {
 
 // -------------------------------------------------------------------------------------------------
 
-fn build_stream_wrapper() {
+fn build_wrappers() {
+    println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/stream.rs");
+    println!("cargo:rerun-if-changed=src/stretcher.rs");
 
     let cargo_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let bungee_dir = cargo_dir.clone().join("vendor").join("bungee");
@@ -70,5 +72,5 @@ fn build_stream_wrapper() {
         .include(bungee_dir.clone().join("submodules").join("eigen"))
         .clone()
         .into();
-    config.build("src/stream.rs");
+    config.build("src/lib.rs");
 }

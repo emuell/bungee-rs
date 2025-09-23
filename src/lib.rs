@@ -1,23 +1,6 @@
 #![doc=include_str!("../README.md")]
 
-use bungee_sys::{stream::BungeeStream, BungeeStretcher, SampleRates};
-use lazy_static::lazy_static;
-
-// -------------------------------------------------------------------------------------------------
-
-// Bungee C API library functions, initialized once at runtime
-lazy_static! {
-    static ref BUNGEE_FUNCTIONS: bungee_sys::Functions = {
-        let funcs_ptr = unsafe {
-            bungee_sys::getFunctionsBungeeBasic()
-        };
-        if funcs_ptr.is_null() {
-            panic!("Failed to get Bungee function table");
-        }
-        // Safety: The library guarantees this is a valid, static pointer
-        unsafe { *funcs_ptr }
-    };
-}
+use bungee_sys::{BungeeStream, BungeeStretcher};
 
 // -------------------------------------------------------------------------------------------------
 
@@ -221,33 +204,25 @@ impl Stretcher {
         if num_channels == 0 {
             return Err("Invalid channel count");
         }
-        unsafe {
-            let functions = &BUNGEE_FUNCTIONS;
+        let sample_rates = bungee_sys::SampleRates {
+            input: sample_rate as i32,
+            output: sample_rate as i32,
+        };
 
-            let create_fn = match functions.create {
-                Some(f) => f,
-                None => return Err("Bungee create function not available"),
-            };
+        // The C++ API defaults log2SynthesisHopAdjust to 0
+        let log2_hop_adjust = 0;
 
-            let sample_rates = SampleRates {
-                input: sample_rate as i32,
-                output: sample_rate as i32,
-            };
-
-            // The C++ API defaults log2SynthesisHopAdjust to 0
-            let log2_hop_adjust = 0;
-
-            let inner = create_fn(sample_rates, num_channels as i32, log2_hop_adjust);
-            if inner.is_null() {
-                return Err("Failed to create Bungee stretcher");
-            }
-
-            Ok(Stretcher {
-                inner,
-                sample_rate,
-                num_channels,
-            })
+        let inner =
+            bungee_sys::stretcher::create(sample_rates, num_channels as i32, log2_hop_adjust);
+        if inner.is_null() {
+            return Err("Failed to create Bungee stretcher");
         }
+
+        Ok(Stretcher {
+            inner,
+            sample_rate,
+            num_channels,
+        })
     }
 
     pub fn sample_rate(&self) -> usize {
@@ -262,37 +237,22 @@ impl Stretcher {
     /// This helps the caller to allocate large enough buffers because it is guaranteed that
     /// `InputChunk.len()` will not exceed this number.
     pub fn max_input_frame_count(&self) -> usize {
-        let functions = &BUNGEE_FUNCTIONS;
-        if let Some(func) = functions.max_input_frame_count {
-            unsafe { func(self.inner as *const _) as usize }
-        } else {
-            panic!("Bungee max_input_frame_count function not available");
-        }
+        bungee_sys::stretcher::max_input_frame_count(self.inner) as usize
     }
 
     /// Adjusts `request.position` for a run-in.
     pub fn preroll(&mut self, request: &mut Request) {
-        let functions = &BUNGEE_FUNCTIONS;
         let mut ffi_request: bungee_sys::Request = (*request).into();
-        if let Some(preroll_fn) = functions.preroll {
-            unsafe { preroll_fn(self.inner, &mut ffi_request) };
-        }
+        bungee_sys::stretcher::preroll(self.inner, &mut ffi_request);
         *request = ffi_request.into();
     }
 
     /// Specifies a grain and computes the necessary input audio segment.
     pub fn specify_grain(&mut self, request: &Request) -> InputChunk {
-        let functions = &BUNGEE_FUNCTIONS;
         let ffi_request: bungee_sys::Request = (*request).into();
-        if let Some(specify_grain_fn) = functions.specify_grain {
-            unsafe {
-                // The C++ API defaults bufferStartPosition to 0.0, so we do the same.
-                let buffer_start_pos = 0.0;
-                specify_grain_fn(self.inner, &ffi_request, buffer_start_pos).into()
-            }
-        } else {
-            InputChunk { begin: 0, end: 0 }
-        }
+        // The C++ API defaults bufferStartPosition to 0.0, so we do the same.
+        let buffer_start_pos = 0.0;
+        bungee_sys::stretcher::specify_grain(self.inner, &ffi_request, buffer_start_pos).into()
     }
 
     /// Begins processing the grain with the provided audio data.
@@ -301,21 +261,16 @@ impl Stretcher {
     /// `data` must be a valid pointer to audio data corresponding to the chunk specified
     /// by a prior call to `bungee_specify_grain`.
     pub fn analyse_grain(&mut self, data: &mut [f32], channel_stride: usize) {
-        let functions = &BUNGEE_FUNCTIONS;
-        if let Some(analyse_grain_fn) = functions.analyse_grain {
-            unsafe {
-                // The C++ API defaults mute counts to 0, so we do the same.
-                let mute_head = 0;
-                let mute_tail = 0;
-                analyse_grain_fn(
-                    self.inner,
-                    data.as_ptr(),
-                    channel_stride as isize,
-                    mute_head,
-                    mute_tail,
-                );
-            }
-        }
+        // The C++ API defaults mute counts to 0, so we do the same.
+        let mute_head = 0;
+        let mute_tail = 0;
+        bungee_sys::stretcher::analyse_grain(
+            self.inner,
+            data.as_ptr(),
+            channel_stride as isize,
+            mute_head,
+            mute_tail,
+        );
     }
 
     /// Completes processing of the grain and writes the output.
@@ -323,21 +278,15 @@ impl Stretcher {
     /// # Safety
     /// `output` must be a valid pointer to an `OutputChunk` struct that the library can write into.
     pub fn synthesise_grain(&mut self, output: &mut OutputChunk) {
-        let functions = &BUNGEE_FUNCTIONS;
         let mut ffi_output: bungee_sys::OutputChunk = output.into();
-        if let Some(synthesise_grain_fn) = functions.synthesise_grain {
-            unsafe { synthesise_grain_fn(self.inner, &mut ffi_output) };
-        }
+        bungee_sys::stretcher::synthesise_grain(self.inner, &mut ffi_output);
         *output = ffi_output.into();
     }
 
     /// Prepares `request.position` and `request.reset` for the subsequent grain.
     pub fn next(&mut self, request: &mut Request) {
-        let functions = &BUNGEE_FUNCTIONS;
         let mut ffi_request = (*request).into();
-        if let Some(next_fn) = functions.next {
-            unsafe { next_fn(self.inner, &mut ffi_request) };
-        }
+        bungee_sys::stretcher::next(self.inner, &mut ffi_request);
         *request = ffi_request.into();
     }
 }
@@ -345,12 +294,7 @@ impl Stretcher {
 impl Drop for Stretcher {
     /// Destroys a Bungee stretcher instance and frees its memory.
     fn drop(&mut self) {
-        unsafe {
-            let functions = &BUNGEE_FUNCTIONS;
-            if let Some(destroy_fn) = functions.destroy {
-                destroy_fn(self.inner);
-            }
-        }
+        bungee_sys::stretcher::destroy(self.inner);
     }
 }
 
@@ -359,7 +303,9 @@ impl Drop for Stretcher {
 /// A wrapper for `Stretcher` that provides an easy to use API for "streaming" applications
 /// where Bungee is used for forward playback only.
 pub struct Stream {
-    inner: *mut BungeeStream,
+    #[allow(dead_code)]
+    stretcher: Stretcher,
+    stream: *mut BungeeStream,
     channel_count: usize,
     input_pointers: Vec<*const f32>,
     output_pointers: Vec<*mut f32>,
@@ -369,32 +315,28 @@ unsafe impl Send for Stream {}
 unsafe impl Sync for Stream {}
 
 impl Stream {
-    /// Creates a new `Stream` instance.
+    /// Creates a new `Stream` instance from a stretcher instance.
     pub fn new(
         sample_rate: usize,
-        channel_count: usize,
+        num_channels: usize,
         max_input_frame_count: usize,
     ) -> Result<Self, &'static str> {
-        let sample_rates = SampleRates {
-            input: sample_rate as i32,
-            output: sample_rate as i32,
-        };
+        let stretcher = Stretcher::new(sample_rate, num_channels)?;
 
-        // The C++ API defaults log2SynthesisHopAdjust to 0
-        let log2_synthesis_hop_adjust = 0;
-
-        let stream_ptr = bungee_sys::stream::create(
-            sample_rates,
-            channel_count as i32,
+        let stream = bungee_sys::stream::create(
+            stretcher.inner,
+            num_channels as i32,
             max_input_frame_count as i32,
-            log2_synthesis_hop_adjust,
         );
 
-        let input_pointers = vec![std::ptr::null(); channel_count];
-        let output_pointers = vec![std::ptr::null_mut(); channel_count];
+        let channel_count = num_channels;
+
+        let input_pointers = vec![std::ptr::null(); num_channels];
+        let output_pointers = vec![std::ptr::null_mut(); num_channels];
 
         Ok(Stream {
-            inner: stream_ptr,
+            stream,
+            stretcher,
             channel_count,
             input_pointers,
             output_pointers,
@@ -467,7 +409,7 @@ impl Stream {
 
         // process
         bungee_sys::stream::process(
-            self.inner,
+            self.stream,
             if input_channels.is_none() {
                 std::ptr::null()
             } else {
@@ -482,23 +424,23 @@ impl Stream {
 
     /// Current position in the input stream. This is sum of `input_sample_count` over all `process()` calls.
     pub fn input_position(&self) -> isize {
-        bungee_sys::stream::input_position(self.inner) as isize
+        bungee_sys::stream::input_position(self.stream) as isize
     }
 
     /// Current position of the output stream in terms of input frames.
     pub fn output_position(&self) -> f64 {
-        bungee_sys::stream::output_position(self.inner)
+        bungee_sys::stream::output_position(self.stream)
     }
 
     /// Latency due to the stretcher. Units are input frames.
     pub fn latency(&self) -> f64 {
-        bungee_sys::stream::latency(self.inner)
+        bungee_sys::stream::latency(self.stream)
     }
 }
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        bungee_sys::stream::destroy(self.inner);
+        bungee_sys::stream::destroy(self.stream);
     }
 }
 

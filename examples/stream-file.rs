@@ -3,7 +3,7 @@ use wavers::{write, Wav};
 
 use arg::{parse_args, Args};
 
-use bungee_rs::{Stream, Stretcher};
+use bungee_rs::Stream;
 
 // -------------------------------------------------------------------------------------------------
 
