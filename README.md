@@ -72,8 +72,8 @@ fn main() -> Result<(), &'static str> {
     // Preroll to initialize internal state
     stretcher.preroll(&mut request);
     
-    // A real implementation would have a loop here that continues as long as there is audio to process.
-    // For this example, we'll just process one grain.
+    // A real implementation would have a loop here that continues as long as there
+    // is audio to process. For this example, we'll just process one grain.
     
     // Get required input samples
     let input_chunk = stretcher.specify_grain(&request);
@@ -86,7 +86,7 @@ fn main() -> Result<(), &'static str> {
     // The channel stride for non-interleaved data is the number of frames per channel.
     stretcher.analyse_grain(&mut input_data, num_frames);
     
-    // 3. Get output audio
+    // Get output audio
     // The output data is also non-interleaved.
     let max_output_frames = 2048;
     let mut output_data = vec![0.0f32; max_output_frames * num_channels];
