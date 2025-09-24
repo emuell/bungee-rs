@@ -66,11 +66,12 @@ fn build_wrappers() {
     let bungee_dir = cargo_dir.clone().join("vendor").join("bungee");
     let mut config: cpp_build::Config = cc::Build::new()
         .static_crt(true) // see CMAKE_MSVC_RUNTIME_LIBRARY above
-        .flag_if_supported("-std=c++17")
         .include(bungee_dir.clone().join("bungee"))
         .include(bungee_dir.clone().join("submodules"))
         .include(bungee_dir.clone().join("submodules").join("eigen"))
         .clone()
         .into();
-    config.build("src/lib.rs");
+    // See https://docs.rs/cpp_build/latest/src/cpp_build/lib.rs.html#639 
+    // must be here on the cpp_build::Config to avoid an extra 'C++11' flag.
+    config.flag_if_supported("-std=c++17").build("src/lib.rs");
 }

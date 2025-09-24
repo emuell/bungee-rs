@@ -10,7 +10,6 @@ use crate::{BungeeStretcher, InputChunk, OutputChunk, Request, SampleRates};
 
 cpp! {{
     #include "Bungee.h"
-    #include <cstdint>
 
     using namespace Bungee;
     using Edition = Bungee::Basic;

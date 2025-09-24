@@ -9,9 +9,7 @@ use cpp::cpp;
 
 cpp! {{
     #include "Stream.h"
-    #include <cstdint>
-    #include <cmath>
-
+    
     using namespace Bungee;
     using Edition = Bungee::Basic;
 }}
