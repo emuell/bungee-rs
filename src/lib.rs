@@ -225,10 +225,12 @@ impl Stretcher {
         })
     }
 
+    /// Returns the stretcher's sample rate.  
     pub fn sample_rate(&self) -> usize {
         self.sample_rate
     }
 
+    /// Returns the stretcher's channel layout.  
     pub fn num_channels(&self) -> usize {
         self.num_channels
     }
@@ -289,6 +291,11 @@ impl Stretcher {
         bungee_sys::stretcher::next(self.inner, &mut ffi_request);
         *request = ffi_request.into();
     }
+
+    /// Returns true (non-zero) if the stretcher's pipeline is flushed.
+    pub fn is_flushed(&self) -> bool {
+        bungee_sys::stretcher::is_flushed(self.inner) != 0
+    }
 }
 
 impl Drop for Stretcher {
@@ -306,7 +313,6 @@ pub struct Stream {
     #[allow(dead_code)]
     stretcher: Stretcher,
     stream: *mut BungeeStream,
-    channel_count: usize,
     input_pointers: Vec<*const f32>,
     output_pointers: Vec<*mut f32>,
 }
@@ -329,18 +335,25 @@ impl Stream {
             max_input_frame_count as i32,
         );
 
-        let channel_count = num_channels;
-
         let input_pointers = vec![std::ptr::null(); num_channels];
         let output_pointers = vec![std::ptr::null_mut(); num_channels];
 
         Ok(Stream {
             stream,
             stretcher,
-            channel_count,
             input_pointers,
             output_pointers,
         })
+    }
+
+    /// Returns the stretcher's sample rate.  
+    pub fn sample_rate(&self) -> usize {
+        self.stretcher.sample_rate()
+    }
+
+    /// Returns the stretcher's channel layout.  
+    pub fn num_channels(&self) -> usize {
+        self.stretcher.num_channels()
     }
 
     /// Processes a segment of audio. Returns the number of output frames that were rendered
@@ -366,7 +379,7 @@ impl Stream {
         if let Some(inputs) = input_channels {
             assert_eq!(
                 inputs.len(),
-                self.channel_count,
+                self.num_channels(),
                 "input_channels slice count must match stream channel count"
             );
             for (channel, samples) in inputs.iter().enumerate() {
@@ -390,7 +403,7 @@ impl Stream {
         // verify output buffer constraints
         assert_eq!(
             output_channels.len(),
-            self.channel_count,
+            self.num_channels(),
             "output_channels slice count must match stream channel count"
         );
         let required_output_len = output_frame_count.ceil() as usize;
