@@ -1,4 +1,4 @@
-//! Provides raw, low-level bindings to the Bungee C++ Stream class.
+//! FFI bindings to the Bungee C++ Stream class.
 #[allow(non_upper_case_globals)]
 use std::ffi::{c_double, c_float, c_int};
 

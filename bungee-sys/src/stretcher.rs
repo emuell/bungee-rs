@@ -1,4 +1,4 @@
-//! Provides raw, low-level bindings to the Bungee C++ Stretcher class.
+//! FFI bindings to the Bungee C++ Stretcher class.
 
 use std::ffi::{c_char, c_double, c_float, c_int, c_uchar};
 

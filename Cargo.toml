@@ -1,18 +1,24 @@
 [package]
-name = "bungee-rs"
-version = "0.1.0"
-edition = "2021"
-description = "High level Rust FFI bindings for the Bungee audio time-stretching library"
-license = "MPL-2.0"
-repository = "https://github.com/bungee-audio-stretch/bungee"
 authors = ["Eduard Müller <mail@emuell.net>"]
+categories = ["multimedia::audio"]
+description = "High level Rust FFI bindings for the Bungee audio time-stretching library"
+edition = "2021"
+exclude = ["examples"]
+keywords = ["audio", "bungee", "timestretch"]
+name = "bungee-rs"
+license = "MPL-2.0"
+repository = "https://github.com/emuell/bungee-rs"
+version = "0.1.1"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-bungee-sys = { path = "./bungee-sys" }
+bungee-sys = { version = "0.1.1", path = "./bungee-sys" }
 
 [dev-dependencies]
 arg = { version = "^0.4", features = ["std"] }
 wavers = "^1.5"
+
+[[example]]
+name = "stream-file"

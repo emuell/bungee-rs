@@ -2,18 +2,15 @@
 
 `bungee-rs` provides safe Rust bindings for the [Bungee](https://github.com/bungee-audio-stretch/bungee) C++ audio time-stretching and pitch-shifting library. 
 
-See also [`bungee-sys`](./bungee-sys/README.md) for a raw, low-level FFI wrapper for Bungee.
-
 ## Usage
 
 There are two ways to use `bungee-rs`: 
-* a high-level `Stream` API for simple, forward-only playback
-* a low-level, grain-by-grain `Stretcher` API for other more complex scenarios.
 
 ### High-Level Stream API
 
 This is the recommended API for most use cases, such as real-time audio processing.
-See also [examples/stream-file.rs](./examples/stream-file.rs)
+
+For a full-blown example, see also `examples/stream-file.rs` in the repository.
 
 ```rust, no_run
 use bungee_rs::{Stretcher, Stream};
@@ -30,8 +27,10 @@ fn main() -> Result<(), &'static str> {
     let mut stream = Stream::new(SAMPLE_RATE, NUM_CHANNELS, INPUT_BLOCK_SIZE)?;
 
     // Prepare planar input and output buffers.
-    let input_block = vec![vec![0.0f32; INPUT_BLOCK_SIZE]; NUM_CHANNELS];
-    let mut output_block = vec![vec![0.0f32; OUTPUT_BLOCK_SIZE.ceil() as usize]; NUM_CHANNELS];
+    let input_block = 
+      vec![vec![0.0f32; INPUT_BLOCK_SIZE]; NUM_CHANNELS];
+    let mut output_block = 
+      vec![vec![0.0f32; OUTPUT_BLOCK_SIZE.ceil() as usize]; NUM_CHANNELS];
 
     // In a real application, you would loop here, reading audio into `input_block`.
 

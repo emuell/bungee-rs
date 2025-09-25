@@ -6,7 +6,6 @@ use std::ffi::{c_double, c_float, c_int, c_uchar};
 // -------------------------------------------------------------------------------------------------
 
 /// Opaque handle to a Bungee stretcher implementation instance.
-/// Corresponds to `void *implementation` in the C API.
 #[repr(C)]
 #[derive(Debug)]
 pub struct BungeeStretcher {
