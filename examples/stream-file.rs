@@ -61,6 +61,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Process
     let mut frames_iter = reader.frames();
+    let mut latency_frames = None;
     let mut total_frames_read = 0;
 
     loop {
@@ -88,8 +89,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 pitch,
             );
 
+            // fetch stream's latency after the first process call
+            let pending_latency_frames =
+                *latency_frames.get_or_insert_with(|| (stream.latency() as f64 / speed) as usize);
+
+            // skip empty latency buffers with the first process calls
+            let frames_to_skip = pending_latency_frames.min(output_frame_count);
+            latency_frames.replace(pending_latency_frames - frames_to_skip);
+
             // push result to interleaved i16 sample buffer
-            for i in 0..output_frame_count {
+            for i in frames_to_skip..output_frame_count {
                 for ch in 0..num_channels {
                     let sample = output_deinterleaved[ch][i];
                     wav_output_samples.push((sample * 32767.0) as i16);
@@ -104,23 +113,29 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    /*// TODO: Flush remaining audio from the stretcher
+    // flush remaining output samples
     loop {
         let output_expected = output_block_size_f;
-        let output_frame_count =
-            stream.process(None, &mut output_deinterleaved, 0, output_expected, pitch);
+        let output_frame_count = stream.process(
+            None,
+            &mut output_deinterleaved,
+            input_block_size,
+            output_expected,
+            pitch,
+        );
 
-        if output_frame_count == 0 {
+        let remaining_frames = total_frames_read.saturating_sub(stream.output_position() as usize);
+        if remaining_frames == 0 {
             break;
         }
 
-        for i in 0..output_frame_count {
+        for i in 0..output_frame_count.min(remaining_frames) {
             for ch in 0..num_channels {
                 let sample = output_deinterleaved[ch][i];
                 wav_output_samples.push((sample * 32767.0) as i16);
             }
         }
-    }*/
+    }
 
     // Write Wav output file
     write(
