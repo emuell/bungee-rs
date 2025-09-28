@@ -74,7 +74,7 @@ impl Stream {
         output_frame_count: f64,
         pitch: f64,
     ) -> usize {
-        // verify input/output frame constraints
+        // verify input/output frame counts
         assert!(
             input_frame_count > 0,
             "invalid input frame count: got {input_frame_count} frames, but need frames > 0"
@@ -84,7 +84,13 @@ impl Stream {
             "invalid output frame count: got {output_frame_count} frames, but need frames > 0"
         );
 
-        // verify input data constraints
+        // verify pitch
+        assert!(
+            pitch > 0.0,
+            "invalid pitch: pitch must be > 0 but is '{pitch}'"
+        );
+
+        // verify input data constraints and convert to ptrs
         if let Some(inputs) = input_channels {
             assert_eq!(
                 inputs.len(),
@@ -109,7 +115,7 @@ impl Stream {
             self.input_pointers.fill(std::ptr::null());
         }
 
-        // verify output data constraints
+        // verify output data constraints and convert to ptrs
         assert_eq!(
             output_channels.len(),
             self.num_channels(),
