@@ -2,9 +2,9 @@
 
 `bungee-sys` provides low-level, unsafe Rust bindings for the [Bungee](https://github.com/bungee-audio-stretch/bungee) C++ audio time-stretching and pitch-shifting library.
 
-Prefer using the high-level and *safer* [`bungee-rs`](../README.md) crate instead.
+See also [`bungee-rs`](../README.md) which uses this crate to provide somewhat *safer* and more high-level bindings.
 
-Note: When building this crate locally, clone the repository with `git clone --recurse-submodules <repository-url>`. It contains the bound C++ source code as git submodule.
+Note: When building this crate locally, clone the repository with `git clone --recurse-submodules <url>`. It contains the bungee C++ source code as git submodule.
 
 ### Prerequisites
 

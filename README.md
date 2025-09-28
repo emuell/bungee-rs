@@ -2,6 +2,8 @@
 
 `bungee-rs` provides safe Rust bindings for the [Bungee](https://github.com/bungee-audio-stretch/bungee) C++ audio time-stretching and pitch-shifting library. 
 
+Note: When building this crate locally, clone the repository with `git clone --recurse-submodules <url>`. It contains the bungee C++ source code as git submodule.
+
 ## Usage
 
 There are two ways to use `bungee-rs`: 
