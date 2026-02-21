@@ -71,7 +71,7 @@ fn build_wrappers() {
         .include(bungee_dir.clone().join("submodules").join("eigen"))
         .clone()
         .into();
-    // See https://docs.rs/cpp_build/latest/src/cpp_build/lib.rs.html#639 
+    // See https://docs.rs/cpp_build/latest/src/cpp_build/lib.rs.html#639
     // must be here on the cpp_build::Config to avoid an extra 'C++11' flag.
-    config.flag_if_supported("-std=c++17").build("src/lib.rs");
+    config.flag_if_supported("-std=c++20").build("src/lib.rs");
 }
