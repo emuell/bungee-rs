@@ -9,7 +9,7 @@ Note: When building this crate locally, clone the repository with `git clone --r
 ### Prerequisites
 
 - Rust toolchain (stable)
-- C++17 compatible compiler (msvc, clang++ or g++)
+- C++20 compatible compiler (msvc, clang++ or g++)
 - CMake (for building Bungee dependencies)
 
 ## License

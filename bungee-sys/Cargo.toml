@@ -7,7 +7,7 @@ keywords = ["audio", "bungee", "timestretch"]
 name = "bungee-sys"
 license = "MPL-2.0"
 repository = "https://github.com/emuell/bungee-rs"
-version = "0.1.1"
+version = "0.2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
