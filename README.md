@@ -1,3 +1,12 @@
+### Deprecated 
+
+> [!NOTE]
+> Upstream Bungee C++ project doesn't support MSVC, which I need for my projects, and maintaining a [fork of Bungee C++](https://github.com/emuell/bungee) isn't worth the trouble for me right now.
+> If you want to take over this project, fork it and let me know if you want to take over [bungee-rs at crates.io](https://crates.io/crates/bungee-rs) as well.
+> 
+> See also [signalsmith-stretch-rs](https://github.com/colinmarc/signalsmith-stretch-rs) for an alternative.
+
+
 # High-level Rust FFI Bindings for Bungee Audio Time-Stretching Library
 
 `bungee-rs` provides safe Rust bindings for the [Bungee](https://github.com/bungee-audio-stretch/bungee) C++ audio time-stretching and pitch-shifting library. 
